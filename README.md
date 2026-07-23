@@ -115,7 +115,7 @@ Replace the `data … record(…)` block in each workflow's DQL task:
 **DQL to Event** (`detect_new_term_transactions`):
 ```dql
 fetch logs, from:now()-6m
-| filter event_type == "banking.transaction" and status == "COMPLETED"
+| filter `event.type` == "banking.transaction" and status == "COMPLETED"
 | lookup [load "/lookups/banking_beneficiaries"], sourceField:account_id, lookupField:account_id
 | fieldsAdd is_new_beneficiary = isNull(lookup.beneficiaries) or not(in(beneficiary_account, lookup.beneficiaries))
 | filter is_new_beneficiary == true
@@ -126,7 +126,7 @@ fetch logs, from:now()-6m
 **DQL to Lookup** (`execute_dql_query`):
 ```dql
 fetch logs, from:now()-24h
-| filter event_type == "banking.transaction"
+| filter `event.type` == "banking.transaction"
 | filter status == "COMPLETED"
 | summarize beneficiaries = collectDistinct(beneficiary_account),
             transaction_count = count(),

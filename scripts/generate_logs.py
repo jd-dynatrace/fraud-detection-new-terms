@@ -86,7 +86,7 @@ def generate(n: int, n_accounts: int) -> list[dict]:
             "timestamp":           ts,
             "severity":            "INFO",
             "content":             f"banking.transaction {txn_type} {account_id} -> {beneficiary} {amount} {currency} {status}",
-            "event_type":          "banking.transaction",
+            "event.type":          "banking.transaction",
             "account_id":          account_id,
             "beneficiary_account": beneficiary,
             "transaction_id":      f"TXN-{today}-{i+1:04d}",
