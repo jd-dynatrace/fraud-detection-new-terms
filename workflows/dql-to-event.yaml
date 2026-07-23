@@ -1,0 +1,135 @@
+title: Fraud Detection - New Term Beneficiaries - DQL to Event
+schemaVersion: 4
+trigger:
+  schedule:
+    filterParameters: {}
+    inputs: {}
+    isActive: false
+    isFaulty: false
+    nextExecution: null
+    rule: null
+    timezone: Europe/Amsterdam
+    trigger:
+      intervalMinutes: 5
+      type: interval
+triggerType: Schedule
+type: STANDARD
+hourlyExecutionLimit: 100
+guide: |-
+  ## Banking Alert — New Term Beneficiaries
+
+  Runs every 5 minutes. Detects outbound transactions to beneficiaries that are not in the `banking_beneficiaries` lookup table for the originating account — i.e. first-time sends that may indicate fraud.
+
+  **Ordering:** This workflow runs at :00/:05/:10/... — always 1 minute BEFORE the lookup update workflow (DQL to Lookup) which runs at :01/:06/:11/...
+  This guarantees: alert fires first → lookup learns the new beneficiary → next run is clean.
+
+  **Data source:** Currently uses a synthetic inline dataset. Replace the `data ... record(...)` block in `detect_new_term_transactions` with:
+  ```
+  fetch bizevents, from:now()-6m
+  | filter event.type == "banking.transaction" and status == "COMPLETED"
+  ```
+
+  **What fires an alert:**
+  - Account has no entry in the lookup at all (brand-new sender)
+  - Beneficiary is not in the account's known list
+tasks:
+  detect_new_term_transactions:
+    action: dynatrace.automations:execute-dql-query
+    description: Join recent transactions against the known-beneficiary lookup. Return only first-time sends.
+    input:
+      failOnEmptyResult: false
+      query: |-
+        data
+            record(timestamp = toTimestamp("2025-07-21T08:15:00.000000000+02:00"), account_id = "ACC-NL-001", transaction_id = "TXN-20250721-0001", beneficiary_account = "ACC-DE-042", amount = 1250.00, currency = "EUR", transaction_type = "CREDIT_TRANSFER", status = "COMPLETED"),
+            record(timestamp = toTimestamp("2025-07-21T09:32:00.000000000+02:00"), account_id = "ACC-NL-001", transaction_id = "TXN-20250721-0002", beneficiary_account = "ACC-FR-018", amount = 340.50, currency = "EUR", transaction_type = "CREDIT_TRANSFER", status = "COMPLETED"),
+            record(timestamp = toTimestamp("2025-07-21T10:05:00.000000000+02:00"), account_id = "ACC-NL-001", transaction_id = "TXN-20250721-0003", beneficiary_account = "ACC-DE-042", amount = 980.00, currency = "EUR", transaction_type = "PAYMENT", status = "COMPLETED"),
+            record(timestamp = toTimestamp("2025-07-21T11:47:00.000000000+02:00"), account_id = "ACC-NL-001", transaction_id = "TXN-20250721-0004", beneficiary_account = "ACC-GB-007", amount = 2100.00, currency = "EUR", transaction_type = "CREDIT_TRANSFER", status = "COMPLETED"),
+            record(timestamp = toTimestamp("2025-07-21T08:22:00.000000000+02:00"), account_id = "ACC-NL-002", transaction_id = "TXN-20250721-0005", beneficiary_account = "ACC-ES-091", amount = 450.00, currency = "EUR", transaction_type = "DIRECT_DEBIT", status = "COMPLETED"),
+            record(timestamp = toTimestamp("2025-07-21T09:10:00.000000000+02:00"), account_id = "ACC-NL-002", transaction_id = "TXN-20250721-0006", beneficiary_account = "ACC-NL-005", amount = 875.25, currency = "EUR", transaction_type = "CREDIT_TRANSFER", status = "COMPLETED"),
+            record(timestamp = toTimestamp("2025-07-21T13:55:00.000000000+02:00"), account_id = "ACC-NL-002", transaction_id = "TXN-20250721-0007", beneficiary_account = "ACC-ES-091", amount = 220.00, currency = "EUR", transaction_type = "DIRECT_DEBIT", status = "COMPLETED"),
+            record(timestamp = toTimestamp("2025-07-21T14:30:00.000000000+02:00"), account_id = "ACC-NL-002", transaction_id = "TXN-20250721-0008", beneficiary_account = "ACC-BE-019", amount = 1600.00, currency = "EUR", transaction_type = "CREDIT_TRANSFER", status = "FAILED"),
+            record(timestamp = toTimestamp("2025-07-21T07:58:00.000000000+02:00"), account_id = "ACC-NL-003", transaction_id = "TXN-20250721-0009", beneficiary_account = "ACC-IT-033", amount = 3200.00, currency = "EUR", transaction_type = "CREDIT_TRANSFER", status = "COMPLETED"),
+            record(timestamp = toTimestamp("2025-07-21T10:44:00.000000000+02:00"), account_id = "ACC-NL-003", transaction_id = "TXN-20250721-0010", beneficiary_account = "ACC-NL-001", amount = 500.00, currency = "EUR", transaction_type = "PAYMENT", status = "COMPLETED"),
+            record(timestamp = toTimestamp("2025-07-21T12:20:00.000000000+02:00"), account_id = "ACC-NL-003", transaction_id = "TXN-20250721-0011", beneficiary_account = "ACC-BE-012", amount = 760.80, currency = "EUR", transaction_type = "CREDIT_TRANSFER", status = "COMPLETED"),
+            record(timestamp = toTimestamp("2025-07-21T15:05:00.000000000+02:00"), account_id = "ACC-NL-003", transaction_id = "TXN-20250721-0012", beneficiary_account = "ACC-IT-033", amount = 4100.00, currency = "EUR", transaction_type = "CREDIT_TRANSFER", status = "COMPLETED"),
+            record(timestamp = toTimestamp("2025-07-21T09:00:00.000000000+02:00"), account_id = "ACC-NL-004", transaction_id = "TXN-20250721-0013", beneficiary_account = "ACC-NL-001", amount = 190.00, currency = "EUR", transaction_type = "PAYMENT", status = "COMPLETED"),
+            record(timestamp = toTimestamp("2025-07-21T11:30:00.000000000+02:00"), account_id = "ACC-NL-004", transaction_id = "TXN-20250721-0014", beneficiary_account = "ACC-NL-002", amount = 3350.00, currency = "EUR", transaction_type = "CREDIT_TRANSFER", status = "COMPLETED"),
+            record(timestamp = toTimestamp("2025-07-21T08:05:00.000000000+02:00"), account_id = "ACC-US-010", transaction_id = "TXN-20250721-0015", beneficiary_account = "ACC-NL-001", amount = 5000.00, currency = "USD", transaction_type = "WIRE_TRANSFER", status = "COMPLETED"),
+            record(timestamp = toTimestamp("2025-07-21T08:40:00.000000000+02:00"), account_id = "ACC-US-010", transaction_id = "TXN-20250721-0016", beneficiary_account = "ACC-DE-042", amount = 7800.00, currency = "USD", transaction_type = "WIRE_TRANSFER", status = "COMPLETED"),
+            record(timestamp = toTimestamp("2025-07-21T10:15:00.000000000+02:00"), account_id = "ACC-US-010", transaction_id = "TXN-20250721-0017", beneficiary_account = "ACC-FR-018", amount = 1100.00, currency = "USD", transaction_type = "WIRE_TRANSFER", status = "COMPLETED"),
+            record(timestamp = toTimestamp("2025-07-21T16:00:00.000000000+02:00"), account_id = "ACC-US-010", transaction_id = "TXN-20250721-0018", beneficiary_account = "ACC-GB-007", amount = 9200.00, currency = "USD", transaction_type = "WIRE_TRANSFER", status = "PENDING"),
+            record(timestamp = toTimestamp("2025-07-21T17:12:00.000000000+02:00"), account_id = "ACC-NL-001", transaction_id = "TXN-20250721-0019", beneficiary_account = "ACC-PL-099", amount = 3750.00, currency = "EUR", transaction_type = "CREDIT_TRANSFER", status = "COMPLETED"),
+            record(timestamp = toTimestamp("2025-07-21T17:45:00.000000000+02:00"), account_id = "ACC-NL-003", transaction_id = "TXN-20250721-0020", beneficiary_account = "ACC-CH-055", amount = 12500.00, currency = "EUR", transaction_type = "WIRE_TRANSFER", status = "COMPLETED"),
+            record(timestamp = toTimestamp("2025-07-21T18:03:00.000000000+02:00"), account_id = "ACC-XX-NEW", transaction_id = "TXN-20250721-0021", beneficiary_account = "ACC-NL-001", amount = 25000.00, currency = "EUR", transaction_type = "CREDIT_TRANSFER", status = "COMPLETED")
+        | filter status == "COMPLETED"
+        | lookup [load "/lookups/banking_beneficiaries"], sourceField:account_id, lookupField:account_id
+        | fieldsAdd is_new_beneficiary = isNull(lookup.beneficiaries) or not(in(beneficiary_account, lookup.beneficiaries))
+        | filter is_new_beneficiary == true
+        | fields timestamp, account_id, transaction_id, beneficiary_account, amount, currency, transaction_type
+        | sort timestamp asc
+    name: detect_new_term_transactions
+    position:
+      x: 0
+      "y": 1
+    predecessors: []
+  emit_alerts:
+    action: dynatrace.automations:run-javascript
+    conditions:
+      states:
+        extract_flagged: OK
+    description: Log one alert line per new-term transaction. Extend here to send email/Slack/Davis event.
+    input:
+      script: |-
+        import { result } from '@dynatrace-sdk/automation-utils';
+
+        export default async function () {
+          const flagged = await result('extract_flagged');
+
+          if (!flagged || flagged.length === 0) {
+            console.log('No new term transactions this run — all beneficiaries are known.');
+            return { alertCount: 0, alerts: [] };
+          }
+
+          console.log(`=== FRAUD ALERT: ${flagged.length} new term transaction(s) detected ===`);
+
+          for (const tx of flagged) {
+            console.log('---');
+            console.log(`  account_id:          ${tx.account_id}`);
+            console.log(`  beneficiary_account: ${tx.beneficiary_account}`);
+            console.log(`  transaction_id:      ${tx.transaction_id}`);
+            console.log(`  amount:              ${tx.amount} ${tx.currency}`);
+            console.log(`  transaction_type:    ${tx.transaction_type}`);
+            console.log(`  timestamp:           ${tx.timestamp}`);
+          }
+
+          // TODO: extend with send-notification, Slack, or Davis event emission
+          return { alertCount: flagged.length, alerts: flagged };
+        }
+    name: emit_alerts
+    position:
+      x: 0
+      "y": 3
+    predecessors:
+      - extract_flagged
+  extract_flagged:
+    action: dynatrace.automations:run-javascript
+    conditions:
+      states:
+        detect_new_term_transactions: OK
+    description: Unpack DQL result into a plain array.
+    input:
+      script: |-
+        import { result } from '@dynatrace-sdk/automation-utils';
+
+        export default async function () {
+          const r = await result('detect_new_term_transactions');
+          const flagged = r.records || [];
+          console.log(`New term transactions detected: ${flagged.length}`);
+          return flagged;
+        }
+    name: extract_flagged
+    position:
+      x: 0
+      "y": 2
+    predecessors:
+      - detect_new_term_transactions
