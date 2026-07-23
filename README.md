@@ -73,30 +73,25 @@ Uses `scripts/` to seed a large beneficiary lookup and generate live incoming lo
 
 **Prerequisites:** `dtctl` installed and configured, Python 3.8+.
 
-### Step 1 — Generate and upload the lookup
+### Step 1 — Send incoming logs
 
 ```bash
-# Generate ~4.5M rows (150k accounts × ~30 beneficiaries, ~90 MB)
-python3 scripts/generate_beneficiaries.py
-
-# Upload to Dynatrace
-bash scripts/upload_lookup.sh beneficiaries_lookup.csv banking_beneficiaries
-# Prompts for your Bearer token — not stored anywhere.
-```
-
-This seeds the `banking_beneficiaries` lookup table so the detection workflow has a baseline of known beneficiaries.
-
-### Step 2 — Send incoming logs
-
-```bash
-# Generate and ingest 200 transactions across 20 accounts
+# Generate and ingest 200 transactions across 20 accounts (default)
 python3 scripts/generate_logs.py
 
 # Scale up: 5000 transactions, 100 accounts
 python3 scripts/generate_logs.py 5000 100
 ```
 
-Prompts for an API token with `logs.ingest` scope. About 20% of generated transactions go to never-before-seen beneficiaries — these should trigger the alert workflow.
+Prompts for an API token with `logs.ingest` scope.
+
+### Step 2 — Bootstrap the lookup
+
+Manually trigger the **DQL to Lookup** workflow once (or wait for its schedule) to build the `banking_beneficiaries` lookup from the logs you just ingested. This is the only format the detection DQL understands — the lookup stores one row per account with a `beneficiaries` array built by `collectDistinct()`.
+
+> **Scale-test note:** `scripts/generate_beneficiaries.py` + `scripts/upload_lookup.sh` generate and upload a large flat CSV (~90 MB, 4.5M rows) to stress-test the lookup upload API. That flat format is not compatible with the detection DQL and is not needed for the detection flow.
+
+### Step 3 — Send more logs and watch alerts fire
 
 Log format ingested:
 
@@ -111,7 +106,9 @@ Log format ingested:
 | `transaction_type` | `CREDIT_TRANSFER` |
 | `status` | `COMPLETED` |
 
-### Step 3 — Point the workflows at real logs
+Run `generate_logs.py` again. Now that the lookup is populated, ~20% of transactions (those with `XX`-prefixed beneficiaries) will trigger alerts. The rest are recognised as known.
+
+### Step 4 — Point the workflows at real logs
 
 Replace the `data … record(…)` block in each workflow's DQL task:
 
@@ -137,7 +134,7 @@ fetch logs, from:now()-24h
   by:{account_id}
 ```
 
-### Step 4 — Extend the alert action
+### Step 5 — Extend the alert action
 
 The `emit_alerts` task in `dql-to-event.yaml` logs flagged transactions to the workflow execution log. Extend it to send a real notification:
 

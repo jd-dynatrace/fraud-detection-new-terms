@@ -59,9 +59,12 @@ def generate(n: int, n_accounts: int) -> list[dict]:
     # Account IDs in the same format as generate_beneficiaries.py
     account_ids = [f"{cc[i % len(cc)]}{i:08d}" for i in range(n_accounts)]
 
-    # Beneficiary pool: overlap with account pool so some are "known", some new
-    known_pool = account_ids * 5                          # known beneficiaries
-    new_pool   = [f"XX{i:08d}" for i in range(n * 2)]   # never-before-seen
+    # ~80% go to accounts that will become "known" after the first lookup refresh;
+    # ~20% go to XX-prefixed accounts that will always be new.
+    # On the very first run (empty lookup) ALL completed transactions trigger.
+    # After dql-to-lookup runs once, only the XX ones keep firing.
+    known_pool = account_ids * 5
+    new_pool   = [f"XX{i:08d}" for i in range(n * 2)]
 
     now   = datetime.datetime.utcnow()
     today = now.strftime("%Y%m%d")
@@ -132,7 +135,9 @@ txns      = generate(N_TRANSACTIONS, N_ACCOUNTS)
 completed = sum(1 for t in txns if t["status"] == "COMPLETED")
 flagged   = sum(1 for t in txns if t["beneficiary_account"].startswith("XX"))
 print(f"  {completed} COMPLETED, {N_TRANSACTIONS - completed} other")
-print(f"  ~{flagged} with new (never-seen) beneficiaries — these should trigger alerts")
+print(f"  ~{flagged} with XX-prefixed beneficiaries (always new)")
+print(f"  Note: on first run all {completed} COMPLETED will trigger (empty lookup).")
+print(f"  After dql-to-lookup runs once, only the ~{flagged} XX ones keep firing.")
 
 print("\nIngesting...")
 ingest(env_url, token, txns)
