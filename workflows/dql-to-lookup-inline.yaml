@@ -1,4 +1,4 @@
-title: Fraud Detection - New Term Beneficiaries - DQL to Lookup
+title: Fraud Detection - New Term Beneficiaries - DQL to Lookup (Inline)
 schemaVersion: 4
 trigger:
   schedule:
