@@ -1,9 +1,6 @@
 {
-  "id": "330a0fa0-8746-4dfe-a5f4-b86905823698",
-  "name": "JD - Fraud Detection - New Term Transactions",
+  "name": "Fraud Detection - New Term Transactions",
   "type": "notebook",
-  "owner": "99ba8336-d07e-40bc-b723-969cc1f7162c",
-  "isPrivate": true,
   "content": {
     "version": "7",
     "defaultTimeframe": {
@@ -15,7 +12,7 @@
       {
         "id": "header-001",
         "type": "markdown",
-        "markdown": "# Fraud Detection — New Beneficiary Transactions\n\nThis notebook simulates a first-party fraud detection pattern: identifying outbound transactions where the **beneficiary account has never been seen before** for that specific originating account.\n\nThe detection logic works in two steps:\n1. Load the current **known beneficiary list** from the `banking_beneficiaries` lookup table (maintained by the *JD - DQL to Lookup* workflow).\n2. Cross-check each incoming transaction against that list. Any transaction going to a beneficiary **not yet in the known list** is flagged as a *new beneficiary transaction* and surfaced as a potential fraud signal.\n\n> **Data note:** Transactions in this notebook use a synthetic inline dataset for demonstration. In production, replace the `data ... record(...)` block with `fetch bizevents, from:now()-1h | filter event.type == \"banking.transaction\"`."
+        "markdown": "# Fraud Detection — New Beneficiary Transactions\n\nThis notebook simulates a first-party fraud detection pattern: identifying outbound transactions where the **beneficiary account has never been seen before** for that specific originating account.\n\nThe detection logic works in two steps:\n1. Load the current **known beneficiary list** from the `banking_beneficiaries` lookup table (maintained by the *DQL to Lookup* workflow).\n2. Cross-check each incoming transaction against that list. Any transaction going to a beneficiary **not yet in the known list** is flagged as a *new beneficiary transaction* and surfaced as a potential fraud signal.\n\n> **Data note:** Transactions in this notebook use a synthetic inline dataset for demonstration. In production, replace the `data ... record(...)` block with `fetch logs, from:now()-1h | filter \\`event.type\\` == \"banking.transaction\"`."
       },
       {
         "id": "query-transactions",
@@ -55,7 +52,7 @@
       {
         "id": "note-001",
         "type": "markdown",
-        "markdown": "## Step 1 — Known Beneficiary Baseline\n\nThe lookup table `banking_beneficiaries` is maintained by the *JD - DQL to Lookup* workflow. It holds the **historical known beneficiaries** per account — i.e., every beneficiary the account has successfully sent funds to in prior periods.\n\nThe query below shows the current state of the lookup. Each row represents one account and its full known beneficiary list."
+        "markdown": "## Step 1 — Known Beneficiary Baseline\n\nThe lookup table `banking_beneficiaries` is maintained by the *DQL to Lookup* workflow. It holds the **historical known beneficiaries** per account — i.e., every beneficiary the account has successfully sent funds to in prior periods.\n\nThe query below shows the current state of the lookup. Each row represents one account and its full known beneficiary list."
       },
       {
         "id": "query-lookup",

@@ -13,7 +13,7 @@ Schema:
 Usage:
   python3 generate_beneficiaries.py [n_accounts] [output_file]
 
-Defaults: 5_000_000 accounts, avg 30 beneficiaries, output to /tmp/beneficiaries_5m.csv
+Defaults: 150_000 accounts, avg 30 beneficiaries, output to beneficiaries_lookup.csv (same folder as this script)
 """
 import random
 import sys
@@ -22,7 +22,8 @@ import os
 
 # ── Config ─────────────────────────────────────────────────────────────────
 N_ACCOUNTS        = int(sys.argv[1]) if len(sys.argv) > 1 else 150_000
-OUTPUT            = sys.argv[2] if len(sys.argv) > 2 else "/tmp/beneficiaries_lookup.csv"
+_default_output   = os.path.join(os.path.dirname(os.path.abspath(__file__)), "beneficiaries_lookup.csv")
+OUTPUT            = sys.argv[2] if len(sys.argv) > 2 else _default_output
 POOL_SIZE         = 500_000     # distinct beneficiary account pool
 AVG_BENEFICIARIES = 30
 SIGMA             = 10          # std dev — right-skewed in reality, normal is fine for load test

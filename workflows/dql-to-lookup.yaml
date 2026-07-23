@@ -51,19 +51,19 @@ guide: |-
 
   ### Replacing the inline data source
 
-  The DQL query currently uses a `data` block with synthetic transactions. To point it at real business events, replace the `data ... record(...)` block with:
+  The DQL query currently uses a `data` block with synthetic transactions. To point it at real log data, replace the `data ... record(...)` block with:
 
   ```
-  fetch bizevents, from:now()-24h
-  | filter event.type == "banking.transaction"
+  fetch logs, from:now()-24h
+  | filter `event.type` == "banking.transaction"
   | filter status == "COMPLETED"
   | summarize beneficiaries = collectDistinct(beneficiary_account),
               transaction_count = count(),
-              total_outflow = sum(amount),
+              total_outflow = sum(toDouble(amount)),
     by:{account_id}
   ```
 
-  Adjust `event.type` and field names to match your actual ingest schema.
+  Use `scripts/generate_logs.py` to send synthetic log records for testing. Adjust `event.type` and field names to match your actual ingest schema.
 tasks:
   execute_dql_query:
     action: dynatrace.automations:execute-dql-query

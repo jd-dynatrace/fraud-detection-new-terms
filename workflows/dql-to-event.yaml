@@ -25,9 +25,10 @@ guide: |-
 
   **Data source:** Currently uses a synthetic inline dataset. Replace the `data ... record(...)` block in `detect_new_term_transactions` with:
   ```
-  fetch bizevents, from:now()-6m
-  | filter event.type == "banking.transaction" and status == "COMPLETED"
+  fetch logs, from:now()-6m
+  | filter `event.type` == "banking.transaction" and status == "COMPLETED"
   ```
+  Use `scripts/generate_logs.py` to send synthetic log records for testing.
 
   **What fires an alert:**
   - Account has no entry in the lookup at all (brand-new sender)
