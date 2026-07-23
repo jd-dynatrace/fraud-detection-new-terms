@@ -145,8 +145,9 @@ if token.startswith("Api-Token "):
 
 print(f"\nGenerating {N_TRANSACTIONS} transactions across {N_ACCOUNTS} accounts...")
 txns      = generate(N_TRANSACTIONS, N_ACCOUNTS)
-completed = sum(1 for t in txns if t["status"] == "COMPLETED")
-flagged   = sum(1 for t in txns if t["beneficiary_account"].startswith("XX"))
+parsed    = [json.loads(t["content"]) for t in txns]
+completed = sum(1 for c in parsed if c["status"] == "COMPLETED")
+flagged   = sum(1 for c in parsed if c["beneficiary_account"].startswith("XX"))
 print(f"  {completed} COMPLETED, {N_TRANSACTIONS - completed} other")
 print(f"  ~{flagged} with XX-prefixed beneficiaries (always new)")
 print(f"  Note: on first run all {completed} COMPLETED will trigger (empty lookup).")
