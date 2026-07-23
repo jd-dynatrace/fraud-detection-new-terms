@@ -43,8 +43,8 @@ In Dynatrace → Automations → Workflows, import both files:
 
 | File | Purpose |
 |---|---|
-| `workflows/dql-to-lookup.yaml` | Builds/refreshes the known-beneficiary lookup |
-| `workflows/dql-to-event.yaml` | Detects new-term transactions and fires alerts |
+| `workflows/dql-to-lookup.yaml` | Builds/refreshes the known-beneficiary lookup (inline demo data) |
+| `workflows/dql-to-event.yaml` | Detects new-term transactions and fires alerts (inline demo data) |
 
 After import, set `owner` to your user or a service account.
 
@@ -87,7 +87,7 @@ Prompts for an API token with `logs.ingest` scope.
 
 ### Step 2 — Bootstrap the lookup
 
-Manually trigger the **DQL to Lookup** workflow once (or wait for its schedule) to build the `banking_beneficiaries` lookup from the logs you just ingested. This is the only format the detection DQL understands — the lookup stores one row per account with a `beneficiaries` array built by `collectDistinct()`.
+Import and manually trigger **`workflows/dql-to-lookup-logs.yaml`** once to build the `banking_beneficiaries` lookup from the logs you just ingested. This workflow reads from `fetch logs` directly — no inline data. The lookup stores one row per account with a `beneficiaries` array built by `collectDistinct()`, which is the format the detection DQL expects.
 
 > **Scale-test note:** `scripts/generate_beneficiaries.py` + `scripts/upload_lookup.sh` generate and upload a large flat CSV (~90 MB, 4.5M rows) to stress-test the lookup upload API. That flat format is not compatible with the detection DQL and is not needed for the detection flow.
 
@@ -164,12 +164,13 @@ The lookup workflow accepts `lookup_name`, `lookup_field`, and `append` as workf
 
 ```
 ├── workflows/
-│   ├── dql-to-lookup.yaml          # Workflow: build/refresh the beneficiary lookup
-│   └── dql-to-event.yaml           # Workflow: detect new-term transactions → alert
+│   ├── dql-to-lookup.yaml          # Option 1: build lookup from inline demo data
+│   ├── dql-to-lookup-logs.yaml     # Option 2: build lookup from real ingested logs
+│   └── dql-to-event.yaml           # detect new-term transactions → alert (both options)
 ├── notebooks/
 │   └── new-term-transactions.json  # Dynatrace notebook for interactive exploration
 └── scripts/                        # Option 2 only
-    ├── generate_beneficiaries.py   # generate a seed lookup CSV (~90 MB, 4.5M rows)
+    ├── generate_beneficiaries.py   # generate a lookup CSV for API scale testing (~90 MB)
     ├── generate_logs.py            # generate + ingest synthetic banking transaction logs
     └── upload_lookup.sh            # upload CSV → Dynatrace lookup table via API
 ```

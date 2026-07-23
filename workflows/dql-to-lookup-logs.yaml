@@ -1,0 +1,396 @@
+title: Fraud Detection - New Term Beneficiaries - DQL to Lookup (Logs)
+schemaVersion: 4
+trigger:
+  schedule:
+    filterParameters: {}
+    inputs: {}
+    isActive: false
+    isFaulty: false
+    nextExecution: null
+    rule: null
+    timezone: Europe/Amsterdam
+    trigger:
+      intervalMinutes: 5
+      type: interval
+triggerType: Schedule
+type: STANDARD
+input:
+  append: "false"
+  lookup_field: account_id
+  lookup_name: banking_beneficiaries
+hourlyExecutionLimit: 1000
+guide: |-
+  ## Banking Beneficiary Lookup Builder (Real Log Data)
+
+  Option 2 variant of the lookup builder. Reads from real `banking.transaction`
+  log records (ingested via `scripts/generate_logs.py` or your own pipeline)
+  instead of the inline synthetic dataset.
+
+  Use this workflow when you have real log data flowing in. Use the plain
+  `DQL to Lookup` workflow when you want to run the demo with no ingest setup.
+
+  ### What it produces
+
+  One row per originating account:
+
+  | Field | Example | Description |
+  |---|---|---|
+  | `account_id` | `NL00000000` | Originating account (lookup key) |
+  | `beneficiaries` | `["DE00000042","FR00000018"]` | All distinct beneficiaries seen |
+  | `transaction_count` | `3` | Number of completed outbound transactions |
+  | `total_outflow` | `4330.50` | Sum of all completed transaction amounts |
+
+  ### Workflow inputs
+
+  | Input | Default | Description |
+  |---|---|---|
+  | `lookup_name` | `banking_beneficiaries` | Target lookup table name |
+  | `lookup_field` | `account_id` | Key field used for upsert deduplication |
+  | `append` | `"false"` | `"false"` = upsert/refresh; `"true"` = append history |
+
+  ### Task flow
+
+  1. **execute_dql_query** — Fetches logs for the last 24 hours, filters to `banking.transaction` / `COMPLETED`, aggregates with `collectDistinct(beneficiary_account)` grouped by `account_id`.
+  2. **extract_records** — Unpacks the DQL result into a plain array.
+  3. **lookup_adding_data** — Upserts records into the lookup table. Re-running refreshes in place (deduplicate mode).
+
+  ### Adjusting the time window
+
+  The query uses `from:now()-24h`. For a 5-minute schedule you can tighten
+  this to `from:now()-10m` once the lookup is bootstrapped — wider windows
+  on first run, narrower on steady state.
+tasks:
+  execute_dql_query:
+    action: dynatrace.automations:execute-dql-query
+    description: Aggregate known beneficiaries per account from ingested banking transaction logs.
+    input:
+      failOnEmptyResult: false
+      query: |-
+        fetch logs, from:now()-24h
+        | filter `event.type` == "banking.transaction"
+        | filter status == "COMPLETED"
+        | summarize beneficiaries = collectDistinct(beneficiary_account),
+                    transaction_count = count(),
+                    total_outflow = sum(toDouble(amount)),
+          by:{account_id}
+    name: execute_dql_query
+    position:
+      x: 0
+      "y": 1
+    predecessors: []
+  extract_records:
+    action: dynatrace.automations:run-javascript
+    conditions:
+      states:
+        execute_dql_query: OK
+    description: Extract records from DQL query result.
+    input:
+      script: |-
+        import { result } from '@dynatrace-sdk/automation-utils';
+
+        export default async function () {
+          const results = await result('execute_dql_query');
+          console.log('Query returned', results.records?.length || 0, 'records');
+          return results.records || [];
+        }
+    name: extract_records
+    position:
+      x: 0
+      "y": 2
+    predecessors:
+      - execute_dql_query
+  lookup_adding_data:
+    action: dynatrace.automations:run-javascript
+    conditions:
+      states:
+        extract_records: OK
+    description: Push DQL records into Dynatrace lookup table.
+    input:
+      script: |-
+        import { execution, result } from '@dynatrace-sdk/automation-utils';
+
+        const LOOKUP_TABLE_PATH_PREFIX = "/lookups/";
+
+        type DynatraceLookupUploadRequest = {
+          lookupField: string;
+          filePath: string;
+          overwrite: boolean;
+          displayName: string;
+          skippedRecords: number;
+          autoFlatten: boolean;
+          timezone: string;
+          locale: string;
+          description: string;
+          parsePattern: string;
+        };
+
+        type DynatraceLookupTableOptions = {
+          lookup_field_key: string;
+          lookupTableName: string;
+          displayName: string;
+          description: string;
+        };
+
+        function validateDynatraceLookupTableOptions(
+          options: DynatraceLookupTableOptions,
+        ) {
+          const missingOrInvalid: string[] = [];
+          if (options.lookup_field_key.trim().length === 0) missingOrInvalid.push('lookup_field_key');
+          if (options.lookupTableName.trim().length === 0) missingOrInvalid.push('tableName');
+          if (options.displayName.trim().length === 0) missingOrInvalid.push('displayName');
+          if (options.description.trim().length === 0) missingOrInvalid.push('description');
+          if (missingOrInvalid.length > 0) {
+            throw new Error(`Invalid DynatraceLookupTableOptions. Missing/invalid: ${missingOrInvalid.join(', ')}`);
+          }
+        }
+
+        async function fetchExistingLookupData<T>(lookupTableName: string): Promise<T[]> {
+          const tablePath = `${LOOKUP_TABLE_PATH_PREFIX}${lookupTableName}`;
+          const query = `load "${tablePath}"`;
+
+          const response = await fetch('/platform/storage/query/v1/query:execute', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              query,
+              requestTimeoutMilliseconds: 10000,
+              fetchTimeoutSeconds: 10,
+            }),
+          });
+
+          if (!response.ok) {
+            console.log(`No existing data found for '${tablePath}', starting fresh.`);
+            return [];
+          }
+
+          const result = await response.json();
+          const records = result?.result?.records ?? [];
+          console.log(`Records found: ${records.length}`);
+          return records;
+        }
+
+        async function uploadDynatraceLookupTable<LookupTableData>(
+          lookupTableName: string,
+          displayName: string,
+          description: string,
+          payload: LookupTableData[],
+        ) {
+          const tablePath = `${LOOKUP_TABLE_PATH_PREFIX}${lookupTableName}`;
+
+          const request: DynatraceLookupUploadRequest = {
+            lookupField: 'id',
+            filePath: tablePath,
+            overwrite: true,
+            displayName,
+            skippedRecords: 0,
+            autoFlatten: true,
+            timezone: 'UTC',
+            locale: 'en_US',
+            description,
+            parsePattern: 'JSON:data',
+          };
+
+          const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
+          const file = new File([blob], `${lookupTableName}.json`, { type: 'application/json' });
+
+          const formData = new FormData();
+          formData.append('request', JSON.stringify(request));
+          formData.append('content', file);
+
+          const response = await fetch(
+            '/platform/storage/resource-store/v1/files/tabular/lookup:upload',
+            { method: 'POST', body: formData },
+          );
+
+          if (response.ok) {
+            console.log(`Lookup table updated at '${tablePath}' with ${payload.length} total records`);
+          } else {
+            throw new Error(`Failed to update lookup '${tablePath}': ${response.statusText}`);
+          }
+        }
+
+        type BaseRow = Record<string, unknown>;
+        type WithMeta = { id: number; addedAt: string; duplicated_row: number | null };
+
+        async function appendDynatraceLookupTable<LookupTableData extends BaseRow>(
+          options: DynatraceLookupTableOptions,
+          newRows: LookupTableData[],
+          allowDuplicates: boolean = false,
+        ) {
+          const now = new Date().toISOString();
+
+          const existing = await fetchExistingLookupData<LookupTableData & WithMeta>(options.lookupTableName);
+          console.log(`Existing records: ${existing.length}`);
+
+          const maxId = existing.length > 0
+            ? Math.max(...existing.map(r => Number(r.id) ?? 0))
+            : 0;
+
+          let mergedData: (LookupTableData & WithMeta)[];
+
+          if (allowDuplicates) {
+            // -- APPEND MODE ----------------------------------------------
+            const lookup_field_keyToOriginalId = new Map<unknown, number>();
+            for (const row of existing) {
+              if (row.duplicated_row === null || row.duplicated_row === undefined) {
+                lookup_field_keyToOriginalId.set(row[options.lookup_field_key], row.id);
+              }
+            }
+
+            const rowsWithMeta = newRows.map((row, i) => {
+              const key = row[options.lookup_field_key];
+              const originalId = lookup_field_keyToOriginalId.get(key) ?? null;
+              const newId = maxId + i + 1;
+              return {
+                ...row,
+                id: newId,
+                addedAt: now,
+                duplicated_row: originalId,
+              };
+            });
+
+            mergedData = [...existing, ...rowsWithMeta];
+            console.log(`Append mode: added ${newRows.length} rows, total ${mergedData.length}`);
+
+          } else {
+            // -- DEDUPLICATE MODE -----------------------------------------
+            const resultMap = new Map<number, LookupTableData & WithMeta>();
+            for (const row of existing) {
+              resultMap.set(row.id, row);
+            }
+
+            const lookup_field_keyToOriginal = new Map<unknown, LookupTableData & WithMeta>();
+            for (const row of existing) {
+              if (row.duplicated_row === null || row.duplicated_row === undefined) {
+                lookup_field_keyToOriginal.set(row[options.lookup_field_key], row);
+              }
+            }
+
+            const lookup_field_keyToLowestId = new Map<unknown, LookupTableData & WithMeta>();
+            for (const row of existing) {
+              const current = lookup_field_keyToLowestId.get(row[options.lookup_field_key]);
+              if (!current || row.id < current.id) {
+                lookup_field_keyToLowestId.set(row[options.lookup_field_key], row);
+              }
+            }
+
+            let idCounter = maxId + 1;
+
+            for (const row of newRows) {
+              const key = row[options.lookup_field_key];
+              const targetRow = lookup_field_keyToOriginal.get(key) ?? lookup_field_keyToLowestId.get(key);
+
+              if (targetRow) {
+                resultMap.set(targetRow.id, {
+                  ...targetRow,
+                  ...row,
+                  id: targetRow.id,
+                  addedAt: now,
+                  duplicated_row: null,
+                });
+                console.log(`Updated original row for key '${String(key)}' (id: ${targetRow.id}), addedAt: ${now}`);
+              } else {
+                resultMap.set(idCounter, { ...row, id: idCounter, addedAt: now, duplicated_row: null });
+                console.log(`New key '${String(key)}', id: ${idCounter}, addedAt: ${now}`);
+                idCounter++;
+              }
+            }
+
+            mergedData = Array.from(resultMap.values());
+            console.log(`Deduplicate mode: total ${mergedData.length} records`);
+          }
+
+          // -- RECOMPUTE duplicated_row for entire dataset ---------------
+          const groupMap = new Map<unknown, number[]>();
+          for (const row of mergedData) {
+            const key = row[options.lookup_field_key];
+            if (!groupMap.has(key)) groupMap.set(key, []);
+            groupMap.get(key)!.push(row.id);
+          }
+
+          for (const [key, ids] of groupMap.entries()) {
+            ids.sort((a, b) => a - b);
+            groupMap.set(key, ids);
+          }
+
+          const finalData = mergedData.map(row => {
+            const key = row[options.lookup_field_key];
+            const ids = groupMap.get(key)!;
+            const duplicated_row = row.id === ids[0] ? null : ids[0];
+            return { ...row, duplicated_row };
+          });
+
+          await uploadDynatraceLookupTable(
+            options.lookupTableName,
+            options.displayName,
+            options.description,
+            finalData,
+          );
+        }
+
+        // -- READ AND VALIDATE WORKFLOW INPUT PARAMETERS -------------
+        const exec = await execution();
+        const appendParam = (exec as any).input?.append;
+        const lookupName = (exec as any).input?.lookup_name;
+
+        if (!lookupName || String(lookupName).trim() === '') {
+          throw new Error(`Workflow input 'lookup_name' is missing or empty. Set it to the desired lookup table name.`);
+        }
+        console.log(`Lookup table name: ${lookupName}`);
+
+        if (appendParam === undefined || appendParam === null || String(appendParam).trim() === '') {
+          throw new Error(`Workflow input 'append' is missing or empty. Set it to "true" or "false".`);
+        }
+        if (appendParam !== true && appendParam !== false && appendParam !== 'true' && appendParam !== 'false') {
+          throw new Error(`Workflow input 'append' has invalid value: "${appendParam}". Must be "true" or "false".`);
+        }
+
+        const allowDuplicates = appendParam === true || appendParam === 'true';
+        console.log(`Mode: ${allowDuplicates ? 'append' : 'deduplicate'} (from workflow input: append=${appendParam})`);
+
+        // -- READ AND VALIDATE lookup_field FROM WORKFLOW INPUT ------
+        const lookupField = (exec as any).input?.lookup_field;
+
+        if (!lookupField || String(lookupField).trim() === '') {
+          throw new Error("Workflow input 'lookup_field' is missing or empty. Set it to the key field name of your DQL result.");
+        }
+        console.log('lookup_field set to: ' + lookupField);
+
+        // -- READ NEW ROWS FROM PREVIOUS DQL TASK ---------------------
+        const dqlResult = await result('extract_records');
+        const newRows = Array.isArray(dqlResult) ? dqlResult : [];
+        console.log('Rows from DQL query: ' + newRows.length);
+
+        if (newRows.length === 0) {
+          console.log('No rows returned from DQL query, nothing to add.');
+        } else {
+          // -- VALIDATE lookup_field EXISTS IN DQL OUTPUT -------------
+          const firstRecord = newRows[0];
+          const availableFields = Object.keys(firstRecord);
+          console.log('Fields in DQL output: ' + availableFields.join(', '));
+
+          if (!availableFields.includes(lookupField)) {
+            throw new Error(
+              "lookup_field '" + lookupField + "' not found in DQL output. " +
+              "Available fields are: " + availableFields.join(', ')
+            );
+          }
+          console.log("lookup_field '" + lookupField + "' found in DQL output, proceeding.");
+
+          await appendDynatraceLookupTable(
+            {
+              lookup_field_key: lookupField,
+              lookupTableName: lookupName,
+              displayName: lookupName,
+              description: 'Lookup table: ' + lookupName,
+            },
+            newRows,
+            allowDuplicates,
+          );
+        }
+    name: lookup_adding_data
+    position:
+      x: 0
+      "y": 3
+    predecessors:
+      - extract_records
