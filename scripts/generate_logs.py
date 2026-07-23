@@ -15,6 +15,7 @@ Defaults: 200 transactions across 20 accounts
 """
 import json
 import random
+import re
 import subprocess
 import sys
 import os
@@ -66,7 +67,7 @@ def generate(n: int, n_accounts: int) -> list[dict]:
     known_pool = account_ids * 5
     new_pool   = [f"XX{i:08d}" for i in range(n * 2)]
 
-    now   = datetime.datetime.utcnow()
+    now   = datetime.datetime.now(datetime.timezone.utc)
     today = now.strftime("%Y%m%d")
     txns  = []
 
@@ -78,18 +79,18 @@ def generate(n: int, n_accounts: int) -> list[dict]:
         currency    = random.choice(CURRENCIES)
         txn_type    = random.choice(TRANSACTION_TYPES)
         status      = "COMPLETED" if random.random() < 0.85 else random.choice(["FAILED", "PENDING"])
-        ts_offset   = random.randint(0, 3600 * 6)
+        ts_offset   = random.randint(0, 270)   # spread within last 4.5 min so fetch logs from:now()-5m catches them
         ts          = (now - datetime.timedelta(seconds=ts_offset)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
         txns.append({
             "timestamp":           ts,
             "severity":            "INFO",
             "content":             f"banking.transaction {txn_type} {account_id} -> {beneficiary} {amount} {currency} {status}",
-            "event.type":          "banking.transaction",
+            "event_type":          "banking.transaction",
             "account_id":          account_id,
             "beneficiary_account": beneficiary,
             "transaction_id":      f"TXN-{today}-{i+1:04d}",
-            "amount":              amount,
+            "amount":              str(amount),   # DT log attributes are stored as strings
             "currency":            currency,
             "transaction_type":    txn_type,
             "status":              status,
@@ -99,27 +100,38 @@ def generate(n: int, n_accounts: int) -> list[dict]:
 
 # ── POST to Dynatrace Logs Ingest API ─────────────────────────────────────────
 def ingest(env_url: str, token: str, records: list[dict], batch_size: int = 1000) -> None:
-    url   = f"{env_url}/api/v2/logs/ingest"
-    total = 0
+    endpoint = f"{env_url}/api/v2/logs/ingest"
+    total    = 0
     for start in range(0, len(records), batch_size):
         batch   = records[start : start + batch_size]
         payload = json.dumps(batch).encode()
-        req     = urllib.request.Request(
-            url,
-            data=payload,
-            headers={
-                "Authorization":  f"Api-Token {token}",
-                "Content-Type":   "application/json; charset=utf-8",
-            },
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(req):
-                total += len(batch)
-                print(f"  Sent {total}/{len(records)}", flush=True)
-        except urllib.error.HTTPError as e:
-            print(f"ERROR {e.code}: {e.read().decode()}", file=sys.stderr)
-            sys.exit(1)
+        for attempt in range(2):
+            req = urllib.request.Request(
+                endpoint,
+                data=payload,
+                headers={
+                    "Authorization": f"Api-Token {token}",
+                    "Content-Type":  "application/json; charset=utf-8",
+                },
+                method="POST",
+            )
+            try:
+                with urllib.request.urlopen(req):
+                    break
+            except urllib.error.HTTPError as e:
+                body = e.read().decode()
+                # DT Gen3 environments route classic APIs to a different subdomain.
+                # The 404 body contains the correct URL — extract and retry once.
+                if e.code == 404 and attempt == 0:
+                    m = re.search(r"'(https://[^']+)'", body)
+                    if m:
+                        endpoint = m.group(1).rstrip("/") + "/api/v2/logs/ingest"
+                        print(f"  Switching to API domain: {endpoint}", flush=True)
+                        continue
+                print(f"ERROR {e.code}: {body}", file=sys.stderr)
+                sys.exit(1)
+        total += len(batch)
+        print(f"  Sent {total}/{len(records)}", flush=True)
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 env_url = get_env_url()
