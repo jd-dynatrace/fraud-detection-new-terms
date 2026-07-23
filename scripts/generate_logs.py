@@ -83,17 +83,18 @@ def generate(n: int, n_accounts: int) -> list[dict]:
         ts          = (now - datetime.timedelta(seconds=ts_offset)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
         txns.append({
-            "timestamp":           ts,
-            "severity":            "INFO",
-            "content":             f"banking.transaction {txn_type} {account_id} -> {beneficiary} {amount} {currency} {status}",
-            "event.type":          "banking.transaction",
-            "account_id":          account_id,
-            "beneficiary_account": beneficiary,
-            "transaction_id":      f"TXN-{today}-{i+1:04d}",
-            "amount":              str(amount),   # DT log attributes are stored as strings
-            "currency":            currency,
-            "transaction_type":    txn_type,
-            "status":              status,
+            "timestamp": ts,
+            "severity":  "INFO",
+            "content":   json.dumps({
+                "event.type":          "banking.transaction",
+                "account_id":          account_id,
+                "beneficiary_account": beneficiary,
+                "transaction_id":      f"TXN-{today}-{i+1:04d}",
+                "amount":              str(amount),
+                "currency":            currency,
+                "transaction_type":    txn_type,
+                "status":              status,
+            }),
         })
 
     return txns
