@@ -83,18 +83,17 @@ def generate(n: int, n_accounts: int) -> list[dict]:
         ts          = (now - datetime.timedelta(seconds=ts_offset)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
         txns.append({
-            "timestamp": ts,
-            "severity":  "INFO",
-            "content":   json.dumps({
-                "event.type":          "banking.transaction",
-                "account_id":          account_id,
-                "beneficiary_account": beneficiary,
-                "transaction_id":      f"TXN-{today}-{i+1:04d}",
-                "amount":              str(amount),
-                "currency":            currency,
-                "transaction_type":    txn_type,
-                "status":              status,
-            }),
+            "timestamp":           ts,
+            "severity":            "INFO",
+            "content":             f"banking.transaction {txn_type} {account_id} -> {beneficiary} {amount} {currency} {status}",
+            "event.type":          "banking.transaction",
+            "account_id":          account_id,
+            "beneficiary_account": beneficiary,
+            "transaction_id":      f"TXN-{today}-{i+1:04d}",
+            "amount":              str(amount),
+            "currency":            currency,
+            "transaction_type":    txn_type,
+            "status":              status,
         })
 
     return txns
@@ -145,9 +144,8 @@ if token.startswith("Api-Token "):
 
 print(f"\nGenerating {N_TRANSACTIONS} transactions across {N_ACCOUNTS} accounts...")
 txns      = generate(N_TRANSACTIONS, N_ACCOUNTS)
-parsed    = [json.loads(t["content"]) for t in txns]
-completed = sum(1 for c in parsed if c["status"] == "COMPLETED")
-flagged   = sum(1 for c in parsed if c["beneficiary_account"].startswith("XX"))
+completed = sum(1 for t in txns if t["status"] == "COMPLETED")
+flagged   = sum(1 for t in txns if t["beneficiary_account"].startswith("XX"))
 print(f"  {completed} COMPLETED, {N_TRANSACTIONS - completed} other")
 print(f"  ~{flagged} with XX-prefixed beneficiaries (always new)")
 print(f"  Note: on first run all {completed} COMPLETED will trigger (empty lookup).")
