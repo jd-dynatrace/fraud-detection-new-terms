@@ -140,6 +140,77 @@ The lookup workflow accepts `lookup_name`, `lookup_field`, and `append` as workf
 
 ---
 
+## Option 3 — Smartscape topology (account relationship graph)
+
+> **Requires Option 2** (real logs flowing in). This is an additive, optional step.
+
+OpenPipeline can extract Smartscape nodes and edges directly from the ingested log records. The result is a live entity graph in the Smartscape UI showing which accounts have sent money to which beneficiaries — and makes the topology traversable in DQL.
+
+### What it produces
+
+- **Nodes** — one `BANKING_ACCOUNT` entity per unique `account.id` and `beneficiary.account` value seen in logs
+- **Edges** — a `sent_to`-style relationship from each sending account to each beneficiary it has transacted with
+
+### OpenPipeline configuration
+
+Navigate to **Settings → OpenPipeline → Logs → Pipelines** and create (or edit) a pipeline scoped to banking transaction logs.
+
+**1 — Filter** (route only relevant records into the topology stages):
+```
+log.source == "banking.transaction" and `transaction.status` == "COMPLETED"
+```
+
+**2 — Processing stage** (add display names before extraction):
+```dql
+fieldsAdd account.name = concat("Account ", `account.id`)
+fieldsAdd beneficiary.name = concat("Account ", `beneficiary.account`)
+```
+
+**3 — Smartscape Node processor** (one processor for sending accounts):
+| Field | Value |
+|---|---|
+| Node type | `BANKING_ACCOUNT` |
+| ID field | `account.id` |
+| Name field | `account.name` |
+| Extract node | enabled |
+
+Add a second node processor for beneficiary accounts using `beneficiary.account` / `beneficiary.name`.
+
+**4 — Smartscape Edge processor** (transaction relationship):
+| Field | Value |
+|---|---|
+| Source node type | `BANKING_ACCOUNT` |
+| Source ID field | `account.id` |
+| Edge type | `sent_to` |
+| Target node type | `BANKING_ACCOUNT` |
+| Target ID field | `beneficiary.account` |
+
+### Query the topology in DQL
+
+Once logs are flowing and the pipeline is active:
+
+```dql
+// All known banking accounts
+smartscapeNodes BANKING_ACCOUNT
+| fields id, name
+
+// Accounts that have sent to a specific beneficiary
+smartscapeNodes BANKING_ACCOUNT
+| traverse sent_to, BANKING_ACCOUNT
+| filter id == "ACC-DE-042"
+
+// Full transaction graph: who sent to whom
+smartscapeNodes BANKING_ACCOUNT
+| traverse sent_to, BANKING_ACCOUNT
+| fields source.id, target.id
+```
+
+### Why this is useful for fraud detection
+
+The Smartscape graph makes it trivial to spot structural anomalies — a new account with many outbound edges, isolated nodes with no history, or a beneficiary appearing across many unrelated accounts — that are hard to see in tabular DQL results alone.
+
+---
+
 ## Files
 
 ```
