@@ -16,7 +16,6 @@ Defaults: 200 transactions across 20 accounts
 import json
 import random
 import re
-import subprocess
 import sys
 import os
 import datetime
@@ -31,28 +30,18 @@ COUNTRY_CODES     = ["NL", "DE", "FR", "GB", "BE", "ES", "IT", "US", "PL", "CH",
 TRANSACTION_TYPES = ["CREDIT_TRANSFER", "WIRE_TRANSFER", "PAYMENT", "DIRECT_DEBIT"]
 CURRENCIES        = ["EUR", "USD", "GBP"]
 
-# ── Get environment URL (matches upload_lookup.sh logic) ──────────────────────
-def get_env_url() -> str:
-    try:
-        ctx = subprocess.run(
-            ["dtctl", "config", "current-context", "--plain"],
-            capture_output=True, text=True, check=True,
-        ).stdout.strip()
-        out = subprocess.run(
-            ["dtctl", "config", "describe-context", ctx, "--plain"],
-            capture_output=True, text=True, check=True,
-        ).stdout
-        for line in out.splitlines():
-            if line.startswith("Environment:"):
-                return line.split(None, 1)[1].strip().rstrip("/")
-    except Exception:
-        pass
-    url = os.environ.get("DT_ENV_URL", "").rstrip("/")
-    if url:
-        return url
-    print("ERROR: could not read environment URL from dtctl.", file=sys.stderr)
-    print("  Configure dtctl or set DT_ENV_URL.", file=sys.stderr)
-    sys.exit(1)
+# ── Load .env from repo root ──────────────────────────────────────────────────
+_env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
+try:
+    with open(_env_path) as _f:
+        for _line in _f:
+            _line = _line.strip()
+            if not _line or _line.startswith("#") or "=" not in _line:
+                continue
+            _k, _, _v = _line.partition("=")
+            os.environ.setdefault(_k.strip(), _v.strip().strip('"').strip("'"))
+except FileNotFoundError:
+    pass
 
 # ── Generate transactions ─────────────────────────────────────────────────────
 def generate(n: int, n_accounts: int) -> list[dict]:
@@ -73,8 +62,9 @@ def generate(n: int, n_accounts: int) -> list[dict]:
 
     for i in range(n):
         account_id  = random.choice(account_ids)
-        # ~20% chance of a new beneficiary to trigger fraud detection
-        beneficiary = random.choice(new_pool if random.random() < 0.2 else known_pool)
+        # ~20% chance of a new beneficiary to trigger fraud detection; never self-send
+        pool        = new_pool if random.random() < 0.2 else [b for b in known_pool if b != account_id]
+        beneficiary = random.choice(pool)
         amount      = round(random.uniform(10, 15_000), 2)
         currency    = random.choice(CURRENCIES)
         txn_type    = random.choice(TRANSACTION_TYPES)
@@ -87,13 +77,13 @@ def generate(n: int, n_accounts: int) -> list[dict]:
             "severity":            "INFO",
             "content":             f"banking.transaction {txn_type} {account_id} -> {beneficiary} {amount} {currency} {status}",
             "event.type":          "banking.transaction",
-            "account_id":          account_id,
-            "beneficiary_account": beneficiary,
-            "transaction_id":      f"TXN-{today}-{i+1:04d}",
-            "amount":              str(amount),
-            "currency":            currency,
-            "transaction_type":    txn_type,
-            "status":              status,
+            "account.id":          account_id,
+            "beneficiary.account": beneficiary,
+            "transaction.id":      f"TXN-{today}-{i+1:04d}",
+            "transaction.amount":  str(amount),
+            "transaction.currency": currency,
+            "transaction.type":    txn_type,
+            "transaction.status":  status,
         })
 
     return txns
@@ -134,18 +124,24 @@ def ingest(env_url: str, token: str, records: list[dict], batch_size: int = 1000
         print(f"  Sent {total}/{len(records)}", flush=True)
 
 # ── Main ──────────────────────────────────────────────────────────────────────
-env_url = get_env_url()
-print(f"Environment: {env_url}")
-print("Paste your API token (from Dynatrace UI → Settings → Access tokens):")
-print("  Required scope: logs.ingest")
-token = input("> ").strip()
+env_url = os.environ.get("DT_ENV_URL", "").rstrip("/")
+token   = os.environ.get("DT_API_TOKEN", "").strip()
+
+if not env_url:
+    print("ERROR: DT_ENV_URL not set. Add it to .env or export it.", file=sys.stderr)
+    sys.exit(1)
+if not token:
+    print("ERROR: DT_API_TOKEN not set. Add it to .env or export it.", file=sys.stderr)
+    sys.exit(1)
 if token.startswith("Api-Token "):
     token = token[len("Api-Token "):]
 
+print(f"Environment: {env_url}")
+
 print(f"\nGenerating {N_TRANSACTIONS} transactions across {N_ACCOUNTS} accounts...")
 txns      = generate(N_TRANSACTIONS, N_ACCOUNTS)
-completed = sum(1 for t in txns if t["status"] == "COMPLETED")
-flagged   = sum(1 for t in txns if t["beneficiary_account"].startswith("XX"))
+completed = sum(1 for t in txns if t["transaction.status"] == "COMPLETED")
+flagged   = sum(1 for t in txns if t["beneficiary.account"].startswith("XX"))
 print(f"  {completed} COMPLETED, {N_TRANSACTIONS - completed} other")
 print(f"  ~{flagged} with XX-prefixed beneficiaries (always new)")
 print(f"  Note: on first run all {completed} COMPLETED will trigger (empty lookup).")

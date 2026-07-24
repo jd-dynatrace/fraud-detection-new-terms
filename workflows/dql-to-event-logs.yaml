@@ -1,0 +1,122 @@
+title: Fraud Detection - New Term Beneficiaries - DQL to Event (Logs)
+schemaVersion: 4
+trigger:
+  schedule:
+    filterParameters: {}
+    inputs: {}
+    isActive: false
+    isFaulty: false
+    nextExecution: null
+    rule: null
+    timezone: Europe/Amsterdam
+    trigger:
+      intervalMinutes: 5
+      type: interval
+triggerType: Schedule
+type: STANDARD
+hourlyExecutionLimit: 100
+guide: |-
+  ## Banking Alert — New Term Beneficiaries (Real Log Data)
+
+  Option 2 variant of the detection workflow. Reads from real
+  `banking.transaction` log records ingested via `scripts/generate_logs.py`
+  instead of the inline synthetic dataset.
+
+  **Ordering:** This workflow runs at :00/:05/:10/... — always 1 minute BEFORE
+  the lookup update workflow (DQL to Lookup) which runs at :01/:06/:11/...
+  This guarantees: alert fires first → lookup learns the new beneficiary → next run is clean.
+
+  **Log format expected** (flat JSON per record from generate_logs.py):
+  - `event.type`          = "banking.transaction"
+  - `account.id`          = originating account
+  - `beneficiary.account` = destination account
+  - `transaction.id`      = unique transaction ID
+  - `transaction.amount`  = transaction amount (string)
+  - `transaction.currency` = EUR / USD / GBP
+  - `transaction.type`    = CREDIT_TRANSFER / WIRE_TRANSFER / PAYMENT / DIRECT_DEBIT
+  - `transaction.status`  = COMPLETED / FAILED / PENDING
+
+  **What fires an alert:**
+  - Account has no entry in the lookup at all (brand-new sender)
+  - Beneficiary is not in the account's known list
+tasks:
+  detect_new_term_transactions:
+    action: dynatrace.automations:execute-dql-query
+    description: Join recent log-based transactions against the known-beneficiary lookup. Return only first-time sends.
+    input:
+      failOnEmptyResult: false
+      query: |-
+        fetch logs, from:now()-6m
+        | filter `event.type` == "banking.transaction"
+        | filter `transaction.status` == "COMPLETED"
+        | lookup [load "/lookups/banking_beneficiaries"], sourceField:`account.id`, lookupField:`account.id`
+        | fieldsAdd is_new_beneficiary = isNull(lookup.beneficiaries) or not(in(`beneficiary.account`, lookup.beneficiaries))
+        | filter is_new_beneficiary == true
+        | fields timestamp, `account.id`, `transaction.id`, `beneficiary.account`, `transaction.amount`, `transaction.currency`, `transaction.type`
+        | sort timestamp asc
+    name: detect_new_term_transactions
+    position:
+      x: 0
+      "y": 1
+    predecessors: []
+  emit_alerts:
+    action: dynatrace.automations:run-javascript
+    conditions:
+      states:
+        extract_flagged: OK
+    description: Log one alert line per new-term transaction. Extend here to send email/Slack/Davis event.
+    input:
+      script: |-
+        import { result } from '@dynatrace-sdk/automation-utils';
+
+        export default async function () {
+          const flagged = await result('extract_flagged');
+
+          if (!flagged || flagged.length === 0) {
+            console.log('No new term transactions this run — all beneficiaries are known.');
+            return { alertCount: 0, alerts: [] };
+          }
+
+          console.log(`=== FRAUD ALERT: ${flagged.length} new term transaction(s) detected ===`);
+
+          for (const tx of flagged) {
+            console.log('---');
+            console.log(`  account_id:          ${tx['account.id']}`);
+            console.log(`  beneficiary_account: ${tx['beneficiary.account']}`);
+            console.log(`  transaction_id:      ${tx['transaction.id']}`);
+            console.log(`  amount:              ${tx['transaction.amount']} ${tx['transaction.currency']}`);
+            console.log(`  transaction_type:    ${tx['transaction.type']}`);
+            console.log(`  timestamp:           ${tx.timestamp}`);
+          }
+
+          // TODO: extend with send-notification, Slack, or Davis event emission
+          return { alertCount: flagged.length, alerts: flagged };
+        }
+    name: emit_alerts
+    position:
+      x: 0
+      "y": 3
+    predecessors:
+      - extract_flagged
+  extract_flagged:
+    action: dynatrace.automations:run-javascript
+    conditions:
+      states:
+        detect_new_term_transactions: OK
+    description: Unpack DQL result into a plain array.
+    input:
+      script: |-
+        import { result } from '@dynatrace-sdk/automation-utils';
+
+        export default async function () {
+          const r = await result('detect_new_term_transactions');
+          const flagged = r.records || [];
+          console.log(`New term transactions detected: ${flagged.length}`);
+          return flagged;
+        }
+    name: extract_flagged
+    position:
+      x: 0
+      "y": 2
+    predecessors:
+      - detect_new_term_transactions

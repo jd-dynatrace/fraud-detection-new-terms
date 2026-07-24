@@ -164,9 +164,10 @@ The lookup workflow accepts `lookup_name`, `lookup_field`, and `append` as workf
 
 ```
 ├── workflows/
-│   ├── dql-to-lookup-inline.yaml          # Option 1: build lookup from inline demo data
+│   ├── dql-to-lookup-inline.yaml   # Option 1: build lookup from inline demo data
+│   ├── dql-to-event.yaml           # Option 1: detect new-term transactions → alert
 │   ├── dql-to-lookup-logs.yaml     # Option 2: build lookup from real ingested logs
-│   └── dql-to-event.yaml           # detect new-term transactions → alert (both options)
+│   └── dql-to-event-logs.yaml      # Option 2: detect new-term transactions → alert
 ├── notebooks/
 │   └── new-term-transactions.json  # Dynatrace notebook for interactive exploration
 └── scripts/                        # Option 2 only

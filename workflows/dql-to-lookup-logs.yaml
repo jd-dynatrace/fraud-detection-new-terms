@@ -16,7 +16,7 @@ triggerType: Schedule
 type: STANDARD
 input:
   append: "false"
-  lookup_field: account_id
+  lookup_field: account.id
   lookup_name: banking_beneficiaries
 hourlyExecutionLimit: 1000
 guide: |-
@@ -35,7 +35,7 @@ guide: |-
 
   | Field | Example | Description |
   |---|---|---|
-  | `account_id` | `NL00000000` | Originating account (lookup key) |
+  | `account.id` | `NL00000000` | Originating account (lookup key) |
   | `beneficiaries` | `["DE00000042","FR00000018"]` | All distinct beneficiaries seen |
   | `transaction_count` | `3` | Number of completed outbound transactions |
   | `total_outflow` | `4330.50` | Sum of all completed transaction amounts |
@@ -45,12 +45,12 @@ guide: |-
   | Input | Default | Description |
   |---|---|---|
   | `lookup_name` | `banking_beneficiaries` | Target lookup table name |
-  | `lookup_field` | `account_id` | Key field used for upsert deduplication |
+  | `lookup_field` | `account.id` | Key field used for upsert deduplication |
   | `append` | `"false"` | `"false"` = upsert/refresh; `"true"` = append history |
 
   ### Task flow
 
-  1. **execute_dql_query** — Fetches logs for the last 24 hours, filters to `banking.transaction` / `COMPLETED`, aggregates with `collectDistinct(beneficiary_account)` grouped by `account_id`.
+  1. **execute_dql_query** — Fetches logs for the last 24 hours, filters to `banking.transaction` / `COMPLETED`, aggregates with `collectDistinct(`beneficiary.account`)` grouped by `account.id`.
   2. **extract_records** — Unpacks the DQL result into a plain array.
   3. **lookup_adding_data** — Upserts records into the lookup table. Re-running refreshes in place (deduplicate mode).
 
@@ -68,11 +68,11 @@ tasks:
       query: |-
         fetch logs, from:now()-24h
         | filter `event.type` == "banking.transaction"
-        | filter status == "COMPLETED"
-        | summarize beneficiaries = collectDistinct(beneficiary_account),
+        | filter `transaction.status` == "COMPLETED"
+        | summarize beneficiaries = collectDistinct(`beneficiary.account`),
                     transaction_count = count(),
-                    total_outflow = sum(toDouble(amount)),
-          by:{account_id}
+                    total_outflow = sum(toDouble(`transaction.amount`)),
+          by:{`account.id`}
     name: execute_dql_query
     position:
       x: 0
