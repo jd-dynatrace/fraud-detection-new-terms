@@ -26,7 +26,7 @@ guide: |-
   **Data source:** Currently uses a synthetic inline dataset. Replace the `data ... record(...)` block in `detect_new_term_transactions` with:
   ```
   fetch logs, from:now()-6m
-  | filter `event.type` == "banking.transaction" and `transaction.status` == "COMPLETED"
+  | filter `log.source` == "banking.transaction" and `transaction.status` == "COMPLETED"
   ```
   Use `scripts/generate_logs.py` to send synthetic log records for testing.
 

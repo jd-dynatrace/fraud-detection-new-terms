@@ -27,7 +27,7 @@ guide: |-
   This guarantees: alert fires first → lookup learns the new beneficiary → next run is clean.
 
   **Log format expected** (flat JSON per record from generate_logs.py):
-  - `event.type`          = "banking.transaction"
+  - `log.source`          = "banking.transaction"
   - `account.id`          = originating account
   - `beneficiary.account` = destination account
   - `transaction.id`      = unique transaction ID
@@ -47,7 +47,7 @@ tasks:
       failOnEmptyResult: false
       query: |-
         fetch logs, from:now()-6m
-        | filter `event.type` == "banking.transaction"
+        | filter `log.source` == "banking.transaction"
         | filter `transaction.status` == "COMPLETED"
         | lookup [load "/lookups/banking_beneficiaries"], sourceField:`account.id`, lookupField:`account.id`
         | fieldsAdd is_new_beneficiary = isNull(lookup.beneficiaries) or not(in(`beneficiary.account`, lookup.beneficiaries))

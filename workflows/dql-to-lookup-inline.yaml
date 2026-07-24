@@ -55,7 +55,7 @@ guide: |-
 
   ```
   fetch logs, from:now()-24h
-  | filter `event.type` == "banking.transaction"
+  | filter `log.source` == "banking.transaction"
   | filter `transaction.status` == "COMPLETED"
   | summarize beneficiaries = collectDistinct(`beneficiary.account`),
               transaction_count = count(),
@@ -63,7 +63,7 @@ guide: |-
     by:{`account.id`}
   ```
 
-  Use `scripts/generate_logs.py` to send synthetic log records for testing. Adjust `event.type` and field names to match your actual ingest schema.
+  Use `scripts/generate_logs.py` to send synthetic log records for testing. Adjust `log.source` and field names to match your actual ingest schema.
 tasks:
   execute_dql_query:
     action: dynatrace.automations:execute-dql-query

@@ -97,14 +97,14 @@ Log format ingested:
 
 | Field | Example |
 |---|---|
-| `event.type` | `banking.transaction` |
-| `account_id` | `NL00000000` |
-| `beneficiary_account` | `DE00000042` |
-| `transaction_id` | `TXN-20250723-0001` |
-| `amount` | `1250.00` |
-| `currency` | `EUR` |
-| `transaction_type` | `CREDIT_TRANSFER` |
-| `status` | `COMPLETED` |
+| `log.source` | `banking.transaction` |
+| `account.id` | `NL00000000` |
+| `beneficiary.account` | `DE00000042` |
+| `transaction.id` | `TXN-20260724-0001` |
+| `transaction.amount` | `1250.0` |
+| `transaction.currency` | `EUR` |
+| `transaction.type` | `CREDIT_TRANSFER` |
+| `transaction.status` | `COMPLETED` |
 
 Run `generate_logs.py` again. Now that the lookup is populated, ~20% of transactions (those with `XX`-prefixed beneficiaries) will trigger alerts. The rest are recognised as known.
 
@@ -112,27 +112,7 @@ Run `generate_logs.py` again. Now that the lookup is populated, ~20% of transact
 
 Replace the `data … record(…)` block in each workflow's DQL task:
 
-**DQL to Event** (`detect_new_term_transactions`):
-```dql
-fetch logs, from:now()-6m
-| filter `event.type` == "banking.transaction" and status == "COMPLETED"
-| lookup [load "/lookups/banking_beneficiaries"], sourceField:account_id, lookupField:account_id
-| fieldsAdd is_new_beneficiary = isNull(lookup.beneficiaries) or not(in(beneficiary_account, lookup.beneficiaries))
-| filter is_new_beneficiary == true
-| fields timestamp, account_id, transaction_id, beneficiary_account, amount, currency, transaction_type
-| sort timestamp asc
-```
-
-**DQL to Lookup** (`execute_dql_query`):
-```dql
-fetch logs, from:now()-24h
-| filter `event.type` == "banking.transaction"
-| filter status == "COMPLETED"
-| summarize beneficiaries = collectDistinct(beneficiary_account),
-            transaction_count = count(),
-            total_outflow = sum(toDouble(amount)),
-  by:{account_id}
-```
+Instead, import and use **`workflows/dql-to-event-logs.yaml`** and **`workflows/dql-to-lookup-logs.yaml`** — they already have the correct `fetch logs` queries with the right field names.
 
 ### Step 5 — Extend the alert action
 
@@ -151,9 +131,9 @@ The `emit_alerts` task in `dql-to-event.yaml` logs flagged transactions to the w
 
 | Swap | With |
 |---|---|
-| `banking.transaction` | Your `event.type` value |
-| `beneficiary_account` | The "new entity" field to track |
-| `account_id` | Your grouping key (per-user, per-tenant, etc.) |
+| `banking.transaction` | Your `log.source` value |
+| `beneficiary.account` | The "new entity" field to track |
+| `account.id` | Your grouping key (per-user, per-tenant, etc.) |
 | `banking_beneficiaries` | Your lookup table name (update workflow input) |
 
 The lookup workflow accepts `lookup_name`, `lookup_field`, and `append` as workflow inputs — no script edits needed for basic reuse.

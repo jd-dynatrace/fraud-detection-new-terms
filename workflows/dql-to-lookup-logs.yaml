@@ -67,7 +67,7 @@ tasks:
       failOnEmptyResult: false
       query: |-
         fetch logs, from:now()-24h
-        | filter `event.type` == "banking.transaction"
+        | filter `log.source` == "banking.transaction"
         | filter `transaction.status` == "COMPLETED"
         | summarize beneficiaries = collectDistinct(`beneficiary.account`),
                     transaction_count = count(),
